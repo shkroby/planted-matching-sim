@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.nbi
+*.nbc
+results/
+logs/
+*.ext3
+*.ext3.gz
+.pytest_cache/

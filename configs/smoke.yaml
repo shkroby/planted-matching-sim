@@ -1,0 +1,19 @@
+# Tiny end-to-end check (a minute on a laptop):
+#   python -m pmsim.experiment run configs/smoke.yaml --workers 2
+#   python -m pmsim.experiment plot configs/smoke.yaml
+out_dir: results/smoke
+seed: 1
+
+grids:
+  - n: [64, 128, 256]
+    C: ["1/4", "2/3", 1, 2, 3, 4]
+    reps: 3
+
+sampler:
+  burn_factor: 10
+  sample_factor: 10
+
+plots:
+  recovery_n: [64, 128, 256]
+  scaling_C: [3.0, 4.0]
+  qn_C: ["1/4", "2/3", 1]

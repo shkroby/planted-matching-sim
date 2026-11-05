@@ -1,0 +1,28 @@
+# Main experiment: recovery vs C for Bayes-OPT (swap-chain marginals) and MLE.
+# ~5,300 instances; see `python -m pmsim.experiment plan configs/recovery.yaml`.
+out_dir: $SCRATCH/planted-matching-sim/recovery   # $VARS are expanded
+seed: 20261105
+
+grids:
+  - n: [256, 512, 1024, 2048, 4096]
+    C: [0.5, 1.0, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0, 4.5, 5.0, 6.0]
+    reps: 60
+  - n: [8192]
+    C: [1.0, 1.5, 2.0, 2.25, 2.5, 2.75, 3.0, 3.5, 4.0, 5.0]
+    reps: 24
+
+sampler:
+  kind: walk             # ejection-chain swap chain (exact MH); "uniform" = write-up chain
+  burn_factor: 100       # burn-in proposals per chain  / (n ln n)
+  sample_factor: 100     # sampling proposals per chain / (n ln n)
+  n_random: 2            # chains from a random matching (annealed burn-in)
+  n_mle: 2               # chains from the MLE
+  anneal: 0.5
+  eps: 0.05
+  sinkhorn_iters: 30
+  max_len: 64
+  kmax: 32
+
+plots:
+  recovery_n: [1024, 4096, 8192]
+  scaling_C: [2.5, 3.0, 3.5]

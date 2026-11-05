@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pmsim"
+version = "0.1.0"
+description = "Bayes-optimal (swap-chain MCMC) vs MLE recovery in the Gaussian planted matching"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "scipy>=1.11", "numba>=0.58", "pandas>=2.0",
+                "pyyaml>=6.0", "matplotlib>=3.7"]
+
+[tool.setuptools]
+packages = ["pmsim"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

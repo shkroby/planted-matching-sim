@@ -1,0 +1,19 @@
+# Reproduces the MCMC figure of the write-up (q_n = 1 - mmse_n below C = 2)
+# with the new sampler, as a validation of the posterior sampler.
+out_dir: $SCRATCH/planted-matching-sim/qn_scaling
+seed: 777
+
+grids:
+  - n: [64, 128, 256, 512, 1024, 2048, 4096, 8192, 12288]
+    C: ["1/4", "2/3", 1]
+    reps: 24
+
+sampler:
+  kind: walk
+  burn_factor: 100
+  sample_factor: 200
+  n_random: 2
+  n_mle: 2
+
+plots:
+  qn_C: ["1/4", "2/3", 1]

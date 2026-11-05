@@ -1,0 +1,32 @@
+"""Gaussian planted matching model  W = mu * Pi_{M*} + Z,  mu^2 = C log n."""
+
+from __future__ import annotations
+
+import math
+
+import numpy as np
+
+
+def mu_of(n: int, C: float) -> float:
+    return math.sqrt(C * math.log(n))
+
+
+def sample_instance(n: int, C: float, rng: np.random.Generator,
+                    dtype=np.float32):
+    """Draw (W, sigma) with sigma a uniformly random planted permutation.
+
+    The planted matching is *not* the identity, so the default identity / random
+    initialisation of the chain carries no information about M*.
+    W is generated directly in float32 (half the memory traffic of float64; the
+    Metropolis ratio only needs ~1e-6 relative accuracy).
+    """
+    mu = mu_of(n, C)
+    W = rng.standard_normal((n, n), dtype=dtype)
+    sigma = rng.permutation(n).astype(np.int64)
+    W[np.arange(n), sigma] += dtype(mu)
+    return W, sigma, mu
+
+
+def overlap(perm, sigma) -> float:
+    """|M cap M*| / n  (= 1 - |M triangle M*| / (2n))."""
+    return float(np.mean(np.asarray(perm) == np.asarray(sigma)))
