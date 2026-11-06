@@ -14,6 +14,8 @@
     compare_small_vs_large_n
                         Bayes advantage and convergence gap for this run vs
                         the run in plots.compare_with
+    exponent_vs_C       log(|M_hat cap M*| v 1)/log n vs C (this run plus
+                        plots.compare_with, if given), Bayes-OPT vs MLE
 """
 
 from __future__ import annotations
@@ -187,6 +189,45 @@ def compare_runs(df_small, df_large, out):
     _save(fig, out, "compare_small_vs_large_n")
 
 
+def exponent_vs_C(df, out, C_zoom=2.5):
+    """Exponent alpha = log(|M_hat cap M*| v 1)/log n of the number of correct
+    edges vs C, for Bayes-OPT (solid) and MLE (dashed), one line per n, plus the
+    paired difference.  Note alpha_OPT - alpha_MLE ~ (relative gap)/log n, so a
+    constant relative advantage still shrinks like 1/log n on this scale.
+    """
+    d = df.copy()
+    for e in ("bayes", "mle"):
+        d[f"a_{e}"] = np.log(np.maximum(d.n * d[f"ov_{e}"], 1)) / np.log(d.n)
+    d["a_diff"] = d.a_bayes - d.a_mle
+    ns = sorted(d.n.unique())
+    cols = plt.cm.viridis(np.linspace(0.05, 0.9, len(ns)))
+    fig, ax = plt.subplots(1, 3, figsize=(16, 4.8))
+    for n, c in zip(ns, cols):
+        dn = d[d.n == n]
+        sb, sm, sd = _summ(dn, "a_bayes"), _summ(dn, "a_mle"), _summ(dn, "a_diff")
+        ax[0].plot(sb.C, sb.m, "-o", color=c, ms=3.5, lw=1.3, label=rf"$n = {n}$")
+        ax[0].plot(sm.C, sm.m, "--", color=c, lw=1.0, alpha=0.8)
+        z = sb.C <= C_zoom
+        ax[1].plot(sb.C[z], sb.m[z], "-o", color=c, ms=3.5, lw=1.3)
+        ax[1].plot(sm.C[z], sm.m[z], "--s", color=c, ms=3, lw=1.0, alpha=0.8)
+        ax[2].errorbar(sd.C, sd.m, yerr=Z * sd.se, color=c, marker="o", ms=3.5,
+                       lw=1.3, capsize=2)
+    for a in ax:
+        _shade_threshold(a)
+        a.set_xlabel(r"$C = \mu^2/\log n$")
+    ax[0].set_ylabel(r"$\log(|\widehat M\cap M^\ast| \vee 1)/\log n$")
+    ax[0].set_title("Exponent of correct edges (solid: Bayes-OPT, dashed: MLE)")
+    ax[1].set_title(rf"Zoom: $C \leq {C_zoom:g}$")
+    ax[2].axhline(0, color=GREY, lw=1.0, ls="--", zorder=0)
+    ax[2].set_ylabel(r"$\hat\alpha_{\mathrm{OPT}} - \hat\alpha_{\mathrm{MLE}}$ (paired, 95% CI)")
+    ax[2].set_title("Bayes-OPT minus MLE")
+    h, lab = ax[0].get_legend_handles_labels()
+    fig.tight_layout(rect=(0, 0.1, 1, 1))
+    fig.legend(h, lab, loc="lower center", ncol=len(lab), fontsize="small",
+               bbox_to_anchor=(0.5, 0.0))
+    _save(fig, out, "exponent_vs_C")
+
+
 def bayes_advantage(df, out):
     ns = sorted(df.n.unique())
     cols = SEQ[-len(ns):] if len(ns) <= len(SEQ) else plt.cm.Blues(
@@ -314,9 +355,14 @@ def make_all(cfg):
         if other:
             other = Path(os.path.expandvars(other))
             if other.exists():
-                compare_runs(df, pd.read_csv(other), figdir)
+                df_other = pd.read_csv(other)
+                compare_runs(df, df_other, figdir)
+                exponent_vs_C(pd.concat([df, df_other], ignore_index=True), figdir)
             else:
                 print(f"  compare_with: {other} not found, skipping")
+                exponent_vs_C(df, figdir)
+        else:
+            exponent_vs_C(df, figdir)
         diagnostics(df, figdir)
     error_scaling(df, figdir, tuple(p.get("scaling_C", (2.5, 3.0, 3.5))))
     qn_scaling(df, figdir, p.get("qn_C"))
