@@ -1,0 +1,17 @@
+# Tiny end-to-end check of the JSV addendum (about a minute).
+experiment: jsv
+out_dir: results/jsv_smoke
+seed: 1
+grids:
+  - n: [32, 64]
+    C: [1.5, 2.5, 4.0]
+    reps: 3
+jsv:
+  c_values: [0, 1, 2, 4, 8]
+  burn_sweeps: 50
+  sample_sweeps: 50
+sampler:
+  burn_factor: 10
+  sample_factor: 10
+plots:
+  jsv_C: [1.5, 2.5, 4.0]

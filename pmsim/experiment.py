@@ -42,6 +42,10 @@ def load_config(path):
     cfg.setdefault("out_dir", f"results/{Path(path).stem}")
     cfg["out_dir"] = os.path.expandvars(cfg["out_dir"])
     cfg["sampler"] = {**DEFAULTS, **cfg.get("sampler", {})}
+    cfg.setdefault("experiment", "swap")       # "swap" | "jsv"
+    if cfg["experiment"] == "jsv":
+        from .jsv import JSV_DEFAULTS
+        cfg["jsv"] = {**JSV_DEFAULTS, **cfg.get("jsv", {})}
     cfg["_path"] = str(path)
     return cfg
 
@@ -72,14 +76,23 @@ def task_cost(n, C, cfg):
     b, m = chain_lengths(n, s)
     chains = s["n_random"] + s["n_mle"]
     per_step = 2.0e-6 if s["kind"] == "walk" else 2.5e-7
-    return chains * (b + m) * per_step + 4e-8 * n * n * (s["sinkhorn_iters"] + 10)
+    swap = chains * (b + m) * per_step + 4e-8 * n * n * (s["sinkhorn_iters"] + 10)
+    if cfg["experiment"] != "jsv":
+        return swap
+    j = cfg["jsv"]
+    jsv = ((j["n_empty"] + j["n_mle"]) * (j["burn_sweeps"] + j["sample_sweeps"])
+           * n * n * 1.5e-8 * len(j["c_values"]))
+    return jsv + (swap if j["reference_swap"] else 4e-8 * n * n)
 
 
 def task_mem_bytes(n, cfg):
     s = cfg["sampler"]
     G = (s["n_random"] > 0) + (s["n_mle"] > 0)
     # W f32 + LSA f64 copy (transient) + Q f64 + alias 2xf32 + counts + sparse
-    return n * n * (4 + 8 + 8 + 8 + 4 * G + 4) + (64 << 20)
+    b = n * n * (4 + 8 + 8 + 8 + 4 * G + 4) + (64 << 20)
+    if cfg["experiment"] == "jsv":       # W + two count arrays per start group
+        b = max(b, n * n * (4 + 8 + 2 * 2 * 8 + 8) + (64 << 20))
+    return b
 
 
 def shard_tasks(cfg, shard, nshards):
@@ -112,10 +125,16 @@ def _worker_init():
 
 def _run_task(args):
     n, C, rep, cfg = args
-    from .estimators import run_instance
-    row = run_instance(n, C, seed_for(cfg, n, C, rep), cfg["sampler"])
-    row.update(rep=rep, key=task_key(n, C, rep))
-    return row
+    if cfg["experiment"] == "jsv":
+        from .jsv import run_jsv_instance
+        rows = run_jsv_instance(n, C, seed_for(cfg, n, C, rep), cfg["jsv"],
+                                cfg["sampler"])
+    else:
+        from .estimators import run_instance
+        rows = [run_instance(n, C, seed_for(cfg, n, C, rep), cfg["sampler"])]
+    for row in rows:
+        row.update(rep=rep, key=task_key(n, C, rep))
+    return rows
 
 
 def _done_keys(raw_dir):
@@ -166,6 +185,12 @@ def run(cfg, shard, nshards, workers):
     from .estimators import run_instance
     run_instance(16, 1.0, np.random.SeedSequence(0),
                  {**cfg["sampler"], "burn_factor": 1, "sample_factor": 1})
+    if cfg["experiment"] == "jsv":
+        from .jsv import run_jsv_instance
+        run_jsv_instance(16, 1.0, np.random.SeedSequence(0),
+                         {**cfg["jsv"], "burn_sweeps": 1, "sample_sweeps": 1,
+                          "c_values": [1.0]},
+                         {**cfg["sampler"], "burn_factor": 1, "sample_factor": 1})
 
     path = raw / f"shard_{shard:04d}.jsonl"
     t0 = time.time()
@@ -174,8 +199,8 @@ def run(cfg, shard, nshards, workers):
             max_workers=workers, mp_context=ctx, initializer=_worker_init) as ex:
         futs = [ex.submit(_run_task, (n, C, rep, cfg)) for (n, C, rep) in todo]
         for k, fut in enumerate(as_completed(futs), 1):
-            row = fut.result()
-            fh.write(json.dumps(row) + "\n")
+            rows = fut.result()
+            fh.write("".join(json.dumps(r) + "\n" for r in rows))
             fh.flush()
             os.fsync(fh.fileno())
             if k % max(1, len(todo) // 20) == 0 or k == len(todo):
@@ -193,7 +218,10 @@ def plan(cfg, nshards=None, cpus=64):
     print(f"config      : {cfg['_path']}")
     print(f"out_dir     : {cfg['out_dir']}")
     print(f"tasks       : {len(tasks)}  (n in {ns})")
+    print(f"experiment  : {cfg['experiment']}")
     print(f"sampler     : {cfg['sampler']}")
+    if cfg["experiment"] == "jsv":
+        print(f"jsv         : {cfg['jsv']}")
     for n in ns:
         b, m = chain_lengths(n, cfg["sampler"])
         cnt = sum(1 for t in tasks if t[0] == n)
@@ -222,6 +250,8 @@ def aggregate(cfg):
                     pass
     if not rows:
         sys.exit(f"no results under {out / 'raw'}")
+    if cfg["experiment"] == "jsv":
+        return _aggregate_jsv(pd.DataFrame(rows), out)
     df = pd.DataFrame(rows).drop_duplicates("key", keep="last")
     df["diff"] = df["ov_bayes"] - df["ov_mle"]
     df["q_gap"] = df["q_rand"] - df["q_mle"]
@@ -236,6 +266,28 @@ def aggregate(cfg):
     summ["reps"] = g.size()
     summ.reset_index().to_csv(out / "summary.csv", index=False)
     print(f"{len(df)} tasks -> {out / 'results.csv'}, {out / 'summary.csv'}")
+    return df
+
+
+def _aggregate_jsv(df, out):
+    df = df.drop_duplicates(["key", "c"], keep="last")
+    df["jsv_minus_mle"] = df["ov_jsv"] - df["ov_mle"]
+    if "ov_swap" in df:
+        df["jsv_minus_swap"] = df["ov_jsv"] - df["ov_swap"]
+        df["jsvperf_minus_swap"] = df["ov_jsv_perf"] - df["ov_swap"]
+    df["q_gap_jsv"] = df["q_jsv_empty"] - df["q_jsv_mle"]
+    df.sort_values(["n", "C", "c", "rep"]).to_csv(out / "results.csv", index=False)
+    cols = [c for c in ["ov_jsv", "ov_jsv_perf", "ov_swap", "ov_mle",
+                        "jsv_minus_mle", "jsv_minus_swap", "jsvperf_minus_swap",
+                        "q_jsv", "q_jsv_perf", "q_swap", "q_gap_jsv",
+                        "jsv_agree", "frac_perfect", "mean_size", "t_jsv"]
+            if c in df]
+    g = df.groupby(["n", "C", "c"])[cols]
+    summ = g.mean().add_suffix("_mean").join(g.sem().add_suffix("_se"))
+    summ["reps"] = g.size()
+    summ.reset_index().to_csv(out / "summary.csv", index=False)
+    print(f"{df.key.nunique()} instances x {df.c.nunique()} penalties -> "
+          f"{out / 'results.csv'}, {out / 'summary.csv'}")
     return df
 
 
@@ -262,8 +314,12 @@ def main(argv=None):
     elif a.cmd == "aggregate":
         aggregate(cfg)
     elif a.cmd == "plot":
-        from .plots import make_all
-        make_all(cfg)
+        if cfg["experiment"] == "jsv":
+            from .plots_jsv import make_all_jsv
+            make_all_jsv(cfg)
+        else:
+            from .plots import make_all
+            make_all(cfg)
 
 
 if __name__ == "__main__":

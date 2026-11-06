@@ -59,6 +59,54 @@ the gap between them (`q_rand` vs `q_mle`, and `bayes_agree`) measures non-conve
 $(n,C)$, increase `burn_factor`. The Nishimori energy check $\sqrt n(\langle\Pi_M,W\rangle/n-\mu)$
 is stored as `ez_rand` / `ez_mle` and should be $O(1)$.
 
+## Addendum: the JSV chain with penalty λ
+
+`pmsim/jsv.py` implements the write-up's Jerrum–Sinclair–Vigoda Metropolis chain on **partial**
+matchings. Its target is
+$\mathsf P_{\mu,\lambda}(M)\propto\exp(\mu\langle\Pi_M,W\rangle+|M|\log\lambda)$ with $\lambda=n^c$.
+Each step draws an edge uniformly and proposes one of four moves: an up-move (add it), a down-move
+(remove it), a slide (swap it for the edge covering one endpoint), or nothing. Proposals are
+accepted with the Metropolis ratio.
+
+Two estimators are computed from the chain:
+
+* **`ov_jsv`**: the write-up's $\widetilde M(W)$. The edge-frequency averages over *all* sampling
+  steps are rounded to the best perfect matching. Rows the chain never covered are filled in with
+  MLE edges as a tie-breaker.
+* **`ov_jsv_perf`**: the same, but averaged only over the steps where $M_t$ is perfect. Restricting
+  $\mathsf P_{\mu,\lambda}$ to perfect matchings gives exactly the posterior (Lemma `lem:simple`), so
+  this estimator targets $M_{\rm OPT}$ for any $\lambda$, provided the chain visits perfect matchings.
+
+Each instance runs the MLE, the swap-chain Bayes-OPT, and JSV at every $c$ on the *same* $W$. The
+seed matches `recovery.yaml`, so shared $(n,C,\text{rep})$ triples are identical instances.
+JSV chains start from the empty matching (as in the write-up) and from the MLE, which gives the
+same kind of convergence check as the main experiment.
+
+Bookkeeping is $O(1)$ per accepted move. A "perfect clock" makes the perfect-steps-only averages
+free as well. Nothing-moves are decided from the mate arrays without reading $W$, so most steps
+stay in cache. `tests/test_jsv.py` checks the all-step marginals, the time spent on perfect
+matchings, and the perfect-conditioned posterior against enumeration of all 209 partial matchings
+of $K_{4,4}$.
+
+```bash
+python -m pmsim.experiment run  configs/jsv_smoke.yaml --workers 4      # local check
+bash slurm/submit.sh configs/jsv_lambda.yaml                            # on Torch (~35 core-hours)
+```
+
+| figure | content |
+|---|---|
+| `jsv_recovery_vs_c` | overlap of $\widetilde M_{\rm JSV}$ (all steps / perfect steps) vs $c$, against swap-chain Bayes-OPT and MLE; shading marks $c>1+\sqrt{6C}$ (Lemma `peeling-1`) |
+| `jsv_gap_vs_c` | paired difference $\mathrm{ov}(\widetilde M_{\rm JSV})-\mathrm{ov}(M_{\rm OPT})$ vs $c$, one line per $n$ |
+| `jsv_occupancy` | fraction of steps on perfect matchings and fraction of uncovered vertices vs $c$ |
+| `jsv_diagnostics` | empty-start vs MLE-start JSV chains: gap in $q$ and agreement of the two estimates |
+
+The trade-off these figures are meant to show: a small $\lambda$ leaves many vertices uncovered,
+so $\widetilde M$ estimates the marginals of a different measure. A large $\lambda$ makes
+$\mathsf P_{\mu,\lambda}$ close to the posterior, but once the matching is perfect the only way to
+change it is a down-move, accepted with probability about $1/(\lambda e^{\mu W_e})$. Mixing then
+slows down, and the MLE-started chain stays at the MLE. In a tiny local run the JSV estimate
+already coincided with the MLE for $c\ge2$.
+
 ## Layout
 
 ```
@@ -69,7 +117,10 @@ pmsim/
   experiment.py   plan / run (sharded, resumable) / aggregate / plot CLI
   plots.py        figures in the style of the write-up;  style.py  rcParams
   theory.py       AoN limit, MLE rate delta(C), q_n leading term + scalar reference
-configs/          recovery.yaml (main), qn_scaling.yaml (validation), smoke.yaml
+  jsv.py          JSV chain on partial matchings (penalty lambda = n^c) + per-instance runner
+  plots_jsv.py    figures for the JSV addendum
+configs/          recovery.yaml (main), qn_scaling.yaml (validation), jsv_lambda.yaml
+                  (JSV addendum), smoke.yaml, jsv_smoke.yaml
 slurm/            Torch: config.sh, setup_env.sh, pyrun.sh, submit.sh, *.sbatch
 tests/            exactness tests against enumeration
 ```

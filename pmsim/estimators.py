@@ -14,7 +14,7 @@ from scipy.optimize import linear_sum_assignment
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import min_weight_full_bipartite_matching
 
-from .model import overlap, sample_instance
+from .model import child_seed, overlap, sample_instance
 from .swapchain import Proposal, run_chains
 
 DEFAULTS = dict(
@@ -44,16 +44,26 @@ def mle(W: np.ndarray) -> np.ndarray:
 # ----------------------------------------------------------------------------
 # Bayes-optimal: argmax_M sum_{e in M} p_e(W)
 # ----------------------------------------------------------------------------
-def bayes_round(S) -> np.ndarray:
+def bayes_round(S, fallback=None) -> np.ndarray:
     """Max-weight perfect matching on the (sparse) estimated marginal matrix.
 
     The support of the visit counts contains every matching the chains visited,
     so a perfect matching exists inside it; the assignment problem is solved on
     that sparse support (LAPJVsp), much faster than a dense solve.
+
+    ``fallback`` (a permutation) adds its edges with a negligible weight; it is
+    needed when the counts come from *partial* matchings (JSV chain), whose
+    support need not contain a perfect matching.  Rows that the chain never
+    covered are then completed by the fallback edges.
     """
     if not isinstance(S, csr_matrix):
         S = csr_matrix(np.asarray(S, dtype=np.float64))
     S = S.astype(np.float64)
+    if fallback is not None:
+        n = S.shape[0]
+        scale = max(float(S.max()) if S.nnz else 1.0, 1.0)
+        S = S + csr_matrix((np.full(n, 1e-9 * scale), (np.arange(n), fallback)),
+                           shape=S.shape)
     S.eliminate_zeros()
     _, col = min_weight_full_bipartite_matching(S, maximize=True)
     return col.astype(np.int64)
@@ -77,7 +87,7 @@ def run_instance(n: int, C: float, seed_seq: np.random.SeedSequence,
     """
     cfg = {**DEFAULTS, **(cfg or {})}
     t0 = time.perf_counter()
-    s_inst, s_chain, s_perm = seed_seq.spawn(3)
+    s_inst, s_chain, s_perm = (child_seed(seed_seq, i) for i in range(3))
     W, sigma, mu = sample_instance(n, C, np.random.default_rng(s_inst))
     t_gen = time.perf_counter() - t0
 

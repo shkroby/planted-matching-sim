@@ -1,0 +1,30 @@
+# Addendum: the Jerrum-Sinclair-Vigoda chain on partial matchings for the
+# penalised measure  P_{mu,lambda}(M) ~ exp(mu <Pi_M, W> + |M| log lambda),
+# lambda = n^c, compared on the *same instances* with the swap-chain
+# Bayes-OPT and the MLE.  One task = one instance; all penalties c are run on it.
+experiment: jsv
+out_dir: $SCRATCH/planted-matching-sim/jsv_lambda
+seed: 20261105          # same seed as recovery.yaml -> same instances for shared (n, C, rep)
+
+grids:
+  - n: [256, 512, 1024, 2048]
+    C: [1.5, 2.0, 2.5, 3.0, 4.0]
+    reps: 20
+
+jsv:
+  c_values: [0, 0.5, 1, 1.5, 2, 3, 4, 6, 8]   # lambda = n^c
+  burn_sweeps: 200       # burn-in proposals per chain / n^2
+  sample_sweeps: 200     # sampling proposals per chain / n^2
+  n_empty: 2             # chains from the empty matching (as in the write-up)
+  n_mle: 2               # chains from the MLE
+  lazy: false            # the lazy chain has the same stationary law, half the speed
+  reference_swap: true
+
+sampler:                 # swap-chain reference (see recovery.yaml)
+  kind: walk
+  burn_factor: 100
+  sample_factor: 100
+
+plots:
+  jsv_n: 2048
+  jsv_C: [2.0, 2.5, 3.0, 4.0]
