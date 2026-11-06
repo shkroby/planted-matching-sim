@@ -1,0 +1,23 @@
+# Small-n rerun of recovery.yaml: same swap chain (walk kernel) and C grid,
+# n = 50, 100, 200 so the chain has a chance to mix.  Small n is cheap, so we
+# use more reps (tighter paired CIs on ov(Bayes) - ov(MLE)) and 4x longer chains.
+out_dir: $SCRATCH/planted-matching-sim/recovery_small
+seed: 20261106
+
+grids:
+  - n: [50, 100, 200]
+    C: [0.5, 1.0, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0, 4.5, 5.0, 6.0]
+    reps: 400
+
+sampler:
+  kind: walk
+  burn_factor: 400       # burn-in proposals per chain  / (n ln n)   (recovery.yaml: 100)
+  sample_factor: 400     # sampling proposals per chain / (n ln n)   (recovery.yaml: 100)
+  n_random: 2
+  n_mle: 2
+
+plots:
+  recovery_n: [50, 100, 200]
+  zoom_C: [1.0, 3.5]     # C range of the zoomed recovery figure
+  scaling_C: [2.5, 3.0, 3.5]
+  compare_with: $SCRATCH/planted-matching-sim/recovery/results.csv   # large-n run

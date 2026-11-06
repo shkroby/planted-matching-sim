@@ -9,10 +9,16 @@
                         and scalar reference of Prop. mmse-asymptotics
                         (reproduces the write-up's MCMC figure)
     diagnostics         random-start vs MLE-start chains (convergence check)
+    recovery_zoom       recovery_vs_C zoomed on the C range where Bayes-OPT and
+                        MLE differ, plus the paired difference underneath
+    compare_small_vs_large_n
+                        Bayes advantage and convergence gap for this run vs
+                        the run in plots.compare_with
 """
 
 from __future__ import annotations
 
+import os
 from fractions import Fraction
 from pathlib import Path
 
@@ -95,6 +101,90 @@ def recovery_vs_C(df, out, ns=None):
     lab.append(r"AoN limit $n\to\infty$")
     _legend_below(fig, h, lab, 4, first="Bayes-OPT (swap chain)")
     _save(fig, out, "recovery_vs_C")
+
+
+def recovery_zoom(df, out, ns=None, C_range=(1.0, 3.5)):
+    """Zoom of recovery_vs_C on the C range where Bayes-OPT and MLE differ.
+
+    Top row: overlaps with 95% CIs, y-axis fitted to the data in the window.
+    Bottom row: the paired difference ov(Bayes-OPT) - ov(MLE) (same instances),
+    whose CI is much tighter than the two marginal CIs suggest.
+    """
+    allns = sorted(df.n.unique())
+    ns = ns or allns[-3:]
+    lo, hi = C_range
+    fig, axes = plt.subplots(2, len(ns), figsize=(5.2 * len(ns), 7.4),
+                             sharex=True, squeeze=False,
+                             gridspec_kw=dict(height_ratios=(3, 2)))
+    for k, n in enumerate(ns):
+        d = df[(df.n == n) & (df.C >= lo - 1e-9) & (df.C <= hi + 1e-9)]
+        ax, axd = axes[0, k], axes[1, k]
+        Cg = np.linspace(lo, hi, 300)
+        ax.plot(Cg, theory.bayes_aon_overlap(Cg), color="#b9bec8", lw=1.2,
+                ls=(0, (5, 3)), zorder=1)
+        ylo, yhi = [], []
+        for col, kw, lab in (("ov_bayes", marker(BLUE), "Bayes-OPT (swap chain)"),
+                             ("ov_mle", marker(RUST, "--", "s"), "MLE")):
+            s = _summ(d, col)
+            ax.errorbar(s.C, s.m, yerr=Z * s.se, label=lab, zorder=3, capsize=2.5,
+                        **kw)
+            ylo.append((s.m - Z * s.se).min())
+            yhi.append((s.m + Z * s.se).max())
+        pad = 0.04 * (max(yhi) - min(ylo))
+        ax.set_ylim(min(ylo) - pad, min(1.0, max(yhi)) + pad)
+        ax.set_xlim(lo - 0.1, hi + 0.1)
+        _shade_threshold(ax)
+        ax.set_title(rf"$n = {n}$")
+        s = _summ(d.assign(diff=d.ov_bayes - d.ov_mle), "diff")
+        axd.fill_between(s.C, s.m - Z * s.se, s.m + Z * s.se, color=BLUE,
+                         alpha=0.18, lw=0)
+        axd.plot(s.C, s.m, **marker(BLUE))
+        axd.axhline(0, color=GREY, lw=1.0, ls="--", zorder=0)
+        _shade_threshold(axd)
+        axd.set_xlabel(r"$C = \mu^2/\log n$")
+    axes[0, 0].set_ylabel(r"overlap $|\widehat M \cap M^\ast|/n$")
+    axes[1, 0].set_ylabel(r"$\mathrm{ov}(M_{\mathrm{OPT}}) - \mathrm{ov}(M_{\mathrm{MLE}})$")
+    h, lab = axes[0, 0].get_legend_handles_labels()
+    h.append(plt.Line2D([], [], color="#b9bec8", lw=1.2, ls=(0, (5, 3))))
+    lab.append(r"AoN limit $n\to\infty$")
+    h.append(plt.Rectangle((0, 0), 1, 1, color=BLUE, alpha=0.18, lw=0))
+    lab.append("paired difference, 95% CI")
+    fig.tight_layout(rect=(0, 0.07, 1, 1))
+    fig.legend(h, lab, loc="lower center", ncol=4, bbox_to_anchor=(0.5, 0.0),
+               handlelength=2.6, columnspacing=3)
+    _save(fig, out, "recovery_zoom")
+
+
+def compare_runs(df_small, df_large, out):
+    """Small-n vs large-n runs: Bayes advantage and chain convergence gap vs C."""
+    ns_s, ns_l = sorted(df_small.n.unique()), sorted(df_large.n.unique())
+    cols_s = plt.cm.Blues(np.linspace(0.45, 0.95, len(ns_s)))
+    cols_l = plt.cm.Oranges(np.linspace(0.4, 0.95, len(ns_l)))
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(11.6, 4.6))
+    for df, ns, cols, ls, mk in ((df_small, ns_s, cols_s, "-", "o"),
+                                 (df_large, ns_l, cols_l, "--", "s")):
+        for n, c in zip(ns, cols):
+            d = df[df.n == n]
+            s = _summ(d.assign(diff=d.ov_bayes - d.ov_mle), "diff")
+            a1.errorbar(s.C, s.m, yerr=Z * s.se, color=c, ls=ls, marker=mk,
+                        ms=4, lw=1.3, capsize=2, label=rf"$n = {n}$")
+            g = _summ(d.assign(g=(d.q_rand - d.q_mle).abs()), "g")
+            a2.plot(g.C, g.m.clip(lower=1e-5), color=c, ls=ls, marker=mk, ms=4,
+                    lw=1.3, label=rf"$n = {n}$")
+    a1.axhline(0, color=GREY, lw=1.0, ls="--", zorder=0)
+    for a in (a1, a2):
+        _shade_threshold(a)
+        a.set_xlabel(r"$C = \mu^2/\log n$")
+    a1.set_ylabel(r"$\mathrm{ov}(M_{\mathrm{OPT}}) - \mathrm{ov}(M_{\mathrm{MLE}})$")
+    a1.set_title("Bayes-OPT advantage (paired, 95% CI)")
+    a2.set_yscale("log")
+    a2.set_ylabel(r"mean $|q_{\mathrm{rand}} - q_{\mathrm{MLE}}|$")
+    a2.set_title("Convergence gap of the swap chain")
+    h, lab = a1.get_legend_handles_labels()
+    fig.tight_layout(rect=(0, 0.12, 1, 1))
+    fig.legend(h, lab, loc="lower center", ncol=len(lab), bbox_to_anchor=(0.5, 0.0),
+               handlelength=2.2, columnspacing=1.4, fontsize="small")
+    _save(fig, out, "compare_small_vs_large_n")
 
 
 def bayes_advantage(df, out):
@@ -217,7 +307,16 @@ def make_all(cfg):
     print(f"plotting {len(df)} instances -> {figdir}")
     if df.C.nunique() >= 3:
         recovery_vs_C(df, figdir, p.get("recovery_n"))
+        recovery_zoom(df, figdir, p.get("recovery_n"),
+                      tuple(p.get("zoom_C", (1.0, 3.5))))
         bayes_advantage(df, figdir)
+        other = p.get("compare_with")
+        if other:
+            other = Path(os.path.expandvars(other))
+            if other.exists():
+                compare_runs(df, pd.read_csv(other), figdir)
+            else:
+                print(f"  compare_with: {other} not found, skipping")
         diagnostics(df, figdir)
     error_scaling(df, figdir, tuple(p.get("scaling_C", (2.5, 3.0, 3.5))))
     qn_scaling(df, figdir, p.get("qn_C"))
